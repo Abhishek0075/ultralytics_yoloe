@@ -1,11 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Block modules."""
 
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
@@ -52,6 +53,10 @@ __all__ = (
     "PSA",
     "SCDown",
     "TorchVision",
+    "CustomC2f",
+    "TripletAttention",
+    "SwinBlockWrapper",
+    "EMA"
 )
 
 
@@ -2031,3 +2036,553 @@ class SAVPE(nn.Module):
         aggregated = score.transpose(-2, -3) @ x.reshape(B, self.c, C // self.c, -1).transpose(-1, -2)
 
         return F.normalize(aggregated.transpose(-2, -3).reshape(B, Q, -1), dim=-1, p=2)
+
+
+# Triplet Attention Mechanism-------------------------Start--------------------------------------
+# Triplet Attention Mechanism
+class BasicConv(nn.Module):
+    def __init__(
+        self,
+        in_planes,
+        out_planes,
+        kernel_size,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        relu=True,
+        bn=True,
+        bias=False,
+    ):
+        super(BasicConv, self).__init__()
+        self.out_channels = out_planes
+        self.conv = nn.Conv2d(
+            in_planes,
+            out_planes,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+        )
+        self.bn = (
+            nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True)
+            if bn
+            else None
+        )
+        self.relu = nn.ReLU(inplace=False) if relu else None
+
+    def forward(self, x):
+        x = self.conv(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        if self.relu is not None:
+            x = self.relu(x)
+        return x
+
+class ChannelPool(nn.Module):
+    def forward(self, x):
+        return torch.cat(
+            (torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), dim=1
+        )
+
+
+class SpatialGate(nn.Module):
+    def __init__(self):
+        super(SpatialGate, self).__init__()
+        self.compress = ChannelPool()
+
+        # Replacing the 7x7 convolution with three 3x3 convolutions
+        self.conv1 = BasicConv(2, 1, 3, stride=1, padding=1, relu=True)  # First 3x3 convolution
+        self.conv2 = BasicConv(1, 1, 3, stride=1, padding=1, relu=True)  # Second 3x3 convolution
+        self.conv3 = BasicConv(1, 1, 3, stride=1, padding=1, relu=True)  # Third 3x3 convolution
+
+    def forward(self, x):
+        x_compress = self.compress(x)  # Compress the input using channel pooling
+        x_out = self.conv1(x_compress)  # First 3x3 convolution
+        x_out = self.conv2(x_out)      # Second 3x3 convolution
+        x_out = self.conv3(x_out)      # Third 3x3 convolution
+        scale = torch.sigmoid(x_out)  # Apply sigmoid to generate the attention scale
+        return x * scale
+
+
+
+class CustomTripletAttention(nn.Module):
+    def __init__(self, in_channels):
+        super(CustomTripletAttention, self).__init__()
+        self.ChannelGateH = SpatialGate()  # Applies channel attention in height dimension
+        self.ChannelGateW = SpatialGate()  # Applies channel attention in width dimension
+        self.SpatialGate = SpatialGate()   # Applies spatial attention
+
+    def forward(self, x):
+        x_perm1 = x.permute(0, 2, 1, 3).contiguous()
+        x_out1 = self.ChannelGateH(x_perm1)
+        x_out11 = x_out1.permute(0, 2, 1, 3).contiguous()
+
+        x_perm2 = x.permute(0, 3, 2, 1).contiguous()
+        x_out2 = self.ChannelGateW(x_perm2)
+        x_out21 = x_out2.permute(0, 3, 2, 1).contiguous()
+
+        x_out = self.SpatialGate(x)
+        return (1 / 3) * (x_out + x_out11 + x_out21)
+
+class CustomC2f(nn.Module): 
+    """Replacement of C2f with Triplet Attention Mechanism."""
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
+        """
+        Initializes a Triplet Attention module replacing the original C2f.
+        - c1: Input channels.
+        - c2: Output channels.
+        - n: Unused, kept for interface compatibility.
+        - shortcut: Unused, kept for interface compatibility.
+        - g: Unused, kept for interface compatibility.
+        - e: Expansion ratio, controls intermediate channels.
+        """
+        super(CustomC2f, self).__init__()
+        self.c = int(c2 * e)  # Hidden channels, controls intermediate channels.
+        self.triplet_attention = CustomTripletAttention(c1)
+        self.conv = nn.Conv2d(c1, c2, kernel_size=1, stride=1, bias=False)
+        self.bn = nn.BatchNorm2d(c2)
+        self.relu = nn.ReLU(inplace=False)
+
+    def forward(self, x):
+        """
+        Forward pass through the replaced C2f layer with Triplet Attention.
+        """
+        # print(f"TripletA Input shape: {x.shape}")
+        # Apply triplet attention
+        attention_out = self.triplet_attention(x)
+        
+        # Transform input to desired output channels
+        out = self.conv(attention_out)
+        out = self.bn(out)
+        out = self.relu(out)
+        # print(f"TripletA Output shape: {out.shape}")
+        return out
+
+# #Triplet attension -----------------------end----------------------------------------------------
+
+
+# Swin Transformer Block-------------start----------------------
+from torchvision.ops.misc import MLP, Permute
+from torchvision.ops.stochastic_depth import StochasticDepth
+from torchvision.utils import _log_api_usage_once
+
+def _get_relative_position_bias(
+    relative_position_bias_table: torch.Tensor, relative_position_index: torch.Tensor, window_size: list[int]
+) -> torch.Tensor:
+    N = window_size[0] * window_size[1]
+    relative_position_bias = relative_position_bias_table[relative_position_index]  # type: ignore[index]
+    relative_position_bias = relative_position_bias.view(N, N, -1)
+    relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous().unsqueeze(0)
+    return relative_position_bias
+
+
+torch.fx.wrap("_get_relative_position_bias")
+
+
+def shifted_window_attention(
+    input: Tensor,
+    qkv_weight: Tensor,
+    proj_weight: Tensor,
+    relative_position_bias: Tensor,
+    window_size: list[int],
+    num_heads: int,
+    shift_size: list[int],
+    attention_dropout: float = 0.0,
+    dropout: float = 0.0,
+    qkv_bias: Optional[Tensor] = None,
+    proj_bias: Optional[Tensor] = None,
+    logit_scale: Optional[torch.Tensor] = None,
+    training: bool = True,
+) -> Tensor:
+    """
+    Window based multi-head self attention (W-MSA) module with relative position bias.
+    It supports both of shifted and non-shifted window.
+    Args:
+        input (Tensor[N, H, W, C]): The input tensor or 4-dimensions.
+        qkv_weight (Tensor[in_dim, out_dim]): The weight tensor of query, key, value.
+        proj_weight (Tensor[out_dim, out_dim]): The weight tensor of projection.
+        relative_position_bias (Tensor): The learned relative position bias added to attention.
+        window_size (List[int]): Window size.
+        num_heads (int): Number of attention heads.
+        shift_size (List[int]): Shift size for shifted window attention.
+        attention_dropout (float): Dropout ratio of attention weight. Default: 0.0.
+        dropout (float): Dropout ratio of output. Default: 0.0.
+        qkv_bias (Tensor[out_dim], optional): The bias tensor of query, key, value. Default: None.
+        proj_bias (Tensor[out_dim], optional): The bias tensor of projection. Default: None.
+        logit_scale (Tensor[out_dim], optional): Logit scale of cosine attention for Swin Transformer V2. Default: None.
+        training (bool, optional): Training flag used by the dropout parameters. Default: True.
+    Returns:
+        Tensor[N, H, W, C]: The output tensor after shifted window attention.
+    """
+    B, H, W, C = input.shape
+    # pad feature maps to multiples of window size
+    pad_r = (window_size[1] - W % window_size[1]) % window_size[1]
+    pad_b = (window_size[0] - H % window_size[0]) % window_size[0]
+    x = F.pad(input, (0, 0, 0, pad_r, 0, pad_b))
+    _, pad_H, pad_W, _ = x.shape
+
+    shift_size = shift_size.copy()
+    # If window size is larger than feature size, there is no need to shift window
+    if window_size[0] >= pad_H:
+        shift_size[0] = 0
+    if window_size[1] >= pad_W:
+        shift_size[1] = 0
+
+    # cyclic shift
+    if sum(shift_size) > 0:
+        x = torch.roll(x, shifts=(-shift_size[0], -shift_size[1]), dims=(1, 2))
+
+    # partition windows
+    num_windows = (pad_H // window_size[0]) * (pad_W // window_size[1])
+    x = x.view(B, pad_H // window_size[0], window_size[0], pad_W // window_size[1], window_size[1], C)
+    x = x.permute(0, 1, 3, 2, 4, 5).reshape(B * num_windows, window_size[0] * window_size[1], C)  # B*nW, Ws*Ws, C
+
+    # multi-head attention
+    if logit_scale is not None and qkv_bias is not None:
+        qkv_bias = qkv_bias.clone()
+        length = qkv_bias.numel() // 3
+        qkv_bias[length : 2 * length].zero_()
+    qkv = F.linear(x, qkv_weight, qkv_bias)
+    qkv = qkv.reshape(x.size(0), x.size(1), 3, num_heads, C // num_heads).permute(2, 0, 3, 1, 4)
+    q, k, v = qkv[0], qkv[1], qkv[2]
+    if logit_scale is not None:
+        # cosine attention
+        attn = F.normalize(q, dim=-1) @ F.normalize(k, dim=-1).transpose(-2, -1)
+        logit_scale = torch.clamp(logit_scale, max=math.log(100.0)).exp()
+        attn = attn * logit_scale
+    else:
+        q = q * (C // num_heads) ** -0.5
+        attn = q.matmul(k.transpose(-2, -1))
+    # add relative position bias
+    attn = attn + relative_position_bias
+
+    if sum(shift_size) > 0:
+        # generate attention mask
+        attn_mask = x.new_zeros((pad_H, pad_W))
+        h_slices = ((0, -window_size[0]), (-window_size[0], -shift_size[0]), (-shift_size[0], None))
+        w_slices = ((0, -window_size[1]), (-window_size[1], -shift_size[1]), (-shift_size[1], None))
+        count = 0
+        for h in h_slices:
+            for w in w_slices:
+                attn_mask[h[0] : h[1], w[0] : w[1]] = count
+                count += 1
+        attn_mask = attn_mask.view(pad_H // window_size[0], window_size[0], pad_W // window_size[1], window_size[1])
+        attn_mask = attn_mask.permute(0, 2, 1, 3).reshape(num_windows, window_size[0] * window_size[1])
+        attn_mask = attn_mask.unsqueeze(1) - attn_mask.unsqueeze(2)
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+        attn = attn.view(x.size(0) // num_windows, num_windows, num_heads, x.size(1), x.size(1))
+        attn = attn + attn_mask.unsqueeze(1).unsqueeze(0)
+        attn = attn.view(-1, num_heads, x.size(1), x.size(1))
+
+    attn = F.softmax(attn, dim=-1)
+    attn = F.dropout(attn, p=attention_dropout, training=training)
+
+    x = attn.matmul(v).transpose(1, 2).reshape(x.size(0), x.size(1), C)
+    x = F.linear(x, proj_weight, proj_bias)
+    x = F.dropout(x, p=dropout, training=training)
+
+    # reverse windows
+    x = x.view(B, pad_H // window_size[0], pad_W // window_size[1], window_size[0], window_size[1], C)
+    x = x.permute(0, 1, 3, 2, 4, 5).reshape(B, pad_H, pad_W, C)
+
+    # reverse cyclic shift
+    if sum(shift_size) > 0:
+        x = torch.roll(x, shifts=(shift_size[0], shift_size[1]), dims=(1, 2))
+
+    # unpad features
+    x = x[:, :H, :W, :].contiguous()
+    return x
+
+
+torch.fx.wrap("shifted_window_attention")
+
+
+class ShiftedWindowAttention(nn.Module):
+    """
+    See :func:`shifted_window_attention`.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        window_size: list[int],
+        shift_size: list[int],
+        num_heads: int,
+        qkv_bias: bool = True,
+        proj_bias: bool = True,
+        attention_dropout: float = 0.0,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        if len(window_size) != 2 or len(shift_size) != 2:
+            raise ValueError("window_size and shift_size must be of length 2")
+        self.window_size = window_size
+        self.shift_size = shift_size
+        self.num_heads = num_heads
+        self.attention_dropout = attention_dropout
+        self.dropout = dropout
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.proj = nn.Linear(dim, dim, bias=proj_bias)
+
+        self.define_relative_position_bias_table()
+        self.define_relative_position_index()
+
+    def define_relative_position_bias_table(self):
+        # define a parameter table of relative position bias
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * self.window_size[0] - 1) * (2 * self.window_size[1] - 1), self.num_heads)
+        )  # 2*Wh-1 * 2*Ww-1, nH
+        nn.init.trunc_normal_(self.relative_position_bias_table, std=0.02)
+
+    def define_relative_position_index(self):
+        # get pair-wise relative position index for each token inside the window
+        coords_h = torch.arange(self.window_size[0])
+        coords_w = torch.arange(self.window_size[1])
+        coords = torch.stack(torch.meshgrid(coords_h, coords_w, indexing="ij"))  # 2, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
+        relative_coords[:, :, 1] += self.window_size[1] - 1
+        relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
+        relative_position_index = relative_coords.sum(-1).flatten()  # Wh*Ww*Wh*Ww
+        self.register_buffer("relative_position_index", relative_position_index)
+
+    def get_relative_position_bias(self) -> torch.Tensor:
+        return _get_relative_position_bias(
+            self.relative_position_bias_table, self.relative_position_index, self.window_size  # type: ignore[arg-type]
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x (Tensor): Tensor with layout of [B, H, W, C]
+        Returns:
+            Tensor with same layout as input, i.e. [B, H, W, C]
+        """
+        relative_position_bias = self.get_relative_position_bias()
+        return shifted_window_attention(
+            x,
+            self.qkv.weight,
+            self.proj.weight,
+            relative_position_bias,
+            self.window_size,
+            self.num_heads,
+            shift_size=self.shift_size,
+            attention_dropout=self.attention_dropout,
+            dropout=self.dropout,
+            qkv_bias=self.qkv.bias,
+            proj_bias=self.proj.bias,
+            training=self.training,
+        )
+
+class SwinTransformerBlock(nn.Module):
+    """
+    Swin Transformer Block.
+    Args:
+        dim (int): Number of input channels.
+        num_heads (int): Number of attention heads.
+        window_size (List[int]): Window size.
+        shift_size (List[int]): Shift size for shifted window attention.
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4.0.
+        dropout (float): Dropout rate. Default: 0.0.
+        attention_dropout (float): Attention dropout rate. Default: 0.0.
+        stochastic_depth_prob: (float): Stochastic depth rate. Default: 0.0.
+        norm_layer (nn.Module): Normalization layer.  Default: nn.LayerNorm.
+        attn_layer (nn.Module): Attention layer. Default: ShiftedWindowAttention
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        window_size: list[int],
+        shift_size: list[int],
+        num_heads: int = 4,
+        mlp_ratio: float = 4.0,
+        dropout: float = 0.0,
+        attention_dropout: float = 0.0,
+        stochastic_depth_prob: float = 0.0,
+        norm_layer: Callable[..., nn.Module] = nn.LayerNorm,
+        attn_layer: Callable[..., nn.Module] = ShiftedWindowAttention,
+    ):
+        super().__init__()
+        _log_api_usage_once(self)
+
+        self.norm1 = norm_layer(dim)
+        self.attn = attn_layer(
+            dim,
+            window_size,
+            shift_size,
+            num_heads,
+            attention_dropout=attention_dropout,
+            dropout=dropout,
+        )
+        self.stochastic_depth = StochasticDepth(stochastic_depth_prob, "row")
+        self.norm2 = norm_layer(dim)
+        self.mlp = MLP(dim, [int(dim * mlp_ratio), dim], activation_layer=nn.GELU, inplace=None, dropout=dropout)
+
+        for m in self.mlp.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.normal_(m.bias, std=1e-6)
+
+    def forward(self, x: Tensor):
+        x = self.norm1(x)
+        x = self.attn(x)
+        x = x + self.stochastic_depth(x)
+        x = self.norm2(x)
+        x = self.mlp(x)
+        x = x + self.stochastic_depth(x)
+        return x
+
+
+class SwinBlockWrapper(nn.Module):
+    def __init__(self, dim, window_size, shift_size, num_heads=4):
+        super().__init__()
+        # Norm + permute wrapper
+        print(f"dim={dim}, window_size={window_size}, shift_size={shift_size}, num_heads={num_heads}")
+        self.swin = SwinTransformerBlock(
+            dim=dim,
+            window_size=window_size,
+            shift_size=shift_size,
+            num_heads=num_heads
+        )
+
+    def forward(self, x):  # x: (B, C, H, W)
+        B, C, H, W = x.shape
+        # Permute to (B, H, W, C)
+        x = x.permute(0, 2, 3, 1).contiguous()
+        # Forward through Swin
+        x = self.swin(x)
+        # Back to (B, C, H, W)
+        x = x.permute(0, 3, 1, 2).contiguous()
+        return x
+    
+
+# Swin Transformer Block-------------end----------------------
+class EMA(nn.Module):
+    def __init__(self, channels, c2=None, factor=32):
+        super(EMA, self).__init__()
+        self.groups = factor
+        assert channels // self.groups > 0
+        self.softmax = nn.Softmax(-1)
+        self.agp = nn.AdaptiveAvgPool2d((1, 1))
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+        self.gn = nn.GroupNorm(channels // self.groups, channels // self.groups)
+        self.conv1x1 = nn.Conv2d(channels // self.groups, channels // self.groups, kernel_size=1, stride=1, padding=0)
+        self.conv3x3 = nn.Conv2d(channels // self.groups, channels // self.groups, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, x):
+        b, c, h, w = x.size()
+        group_x = x.reshape(b * self.groups, -1, h, w)
+        x_h = self.pool_h(group_x)
+        x_w = self.pool_w(group_x).permute(0, 1, 3, 2)
+        hw = self.conv1x1(torch.cat([x_h, x_w], dim=2))
+        x_h, x_w = torch.split(hw, [h, w], dim=2)
+        x1 = self.gn(group_x * x_h.sigmoid() * x_w.permute(0, 1, 3, 2).sigmoid())
+        x2 = self.conv3x3(group_x)
+        x11 = self.softmax(self.agp(x1).reshape(b * self.groups, -1, 1).permute(0, 2, 1))
+        x12 = x2.reshape(b * self.groups, c // self.groups, -1)  # b*g, c//g, hw
+        x21 = self.softmax(self.agp(x2).reshape(b * self.groups, -1, 1).permute(0, 2, 1))
+        x22 = x1.reshape(b * self.groups, c // self.groups, -1)  # b*g, c//g, hw
+        weights = (torch.matmul(x11, x12) + torch.matmul(x21, x22)).reshape(b * self.groups, 1, h, w)
+        return (group_x * weights.sigmoid()).reshape(b, c, h, w)
+    
+    
+# ------------------------ EMA End ---------------------------------
+
+# ---------------------------Official Triplet Attention start------------------------------
+
+class BasicConv(nn.Module):
+    def __init__(
+        self,
+        in_planes,
+        out_planes,
+        kernel_size,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        relu=True,
+        bn=True,
+        bias=False,
+    ):
+        super(BasicConv, self).__init__()
+        self.out_channels = out_planes
+        self.conv = nn.Conv2d(
+            in_planes,
+            out_planes,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+        )
+        self.bn = (
+            nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True)
+            if bn
+            else None
+        )
+        self.relu = nn.ReLU() if relu else None
+
+    def forward(self, x):
+        x = self.conv(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        if self.relu is not None:
+            x = self.relu(x)
+        return x
+
+
+class ZPool(nn.Module):
+    def forward(self, x):
+        return torch.cat(
+            (torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), dim=1
+        )
+
+
+class AttentionGate(nn.Module):
+    def __init__(self):
+        super(AttentionGate, self).__init__()
+        kernel_size = 7
+        self.compress = ZPool()
+        self.conv = BasicConv(
+            2, 1, kernel_size, stride=1, padding=(kernel_size - 1) // 2, relu=False
+        )
+
+    def forward(self, x):
+        x_compress = self.compress(x)
+        x_out = self.conv(x_compress)
+        scale = torch.sigmoid_(x_out)
+        return x * scale
+
+
+class TripletAttention(nn.Module):
+    def __init__(self, no_spatial=False):
+        super(TripletAttention, self).__init__()
+        self.cw = AttentionGate()
+        self.hc = AttentionGate()
+        self.no_spatial = no_spatial
+        if not no_spatial:
+            self.hw = AttentionGate()
+
+    def forward(self, x):
+        x_perm1 = x.permute(0, 2, 1, 3).contiguous()
+        x_out1 = self.cw(x_perm1)
+        x_out11 = x_out1.permute(0, 2, 1, 3).contiguous()
+        x_perm2 = x.permute(0, 3, 2, 1).contiguous()
+        x_out2 = self.hc(x_perm2)
+        x_out21 = x_out2.permute(0, 3, 2, 1).contiguous()
+        if not self.no_spatial:
+            x_out = self.hw(x)
+            x_out = 1 / 3 * (x_out + x_out11 + x_out21)
+        else:
+            x_out = 1 / 2 * (x_out11 + x_out21)
+        return x_out

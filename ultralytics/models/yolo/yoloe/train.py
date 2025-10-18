@@ -194,7 +194,7 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
     def preprocess_batch(self, batch):
         """Process batch for training, moving text features to the appropriate device."""
         batch = DetectionTrainer.preprocess_batch(self, batch)
-
+        print(batch)
         texts = list(itertools.chain(*batch["texts"]))
         txt_feats = torch.stack([self.text_embeddings[text] for text in texts]).to(self.device)
         txt_feats = txt_feats.reshape(len(batch["texts"]), -1, txt_feats.shape[-1])
