@@ -19,6 +19,7 @@ from ultralytics.nn.modules import (
     C3,
     C3TR,
     ELAN1,
+    EMA,
     OBB,
     PSA,
     SPP,
@@ -43,6 +44,7 @@ from ultralytics.nn.modules import (
     Conv,
     Conv2,
     ConvTranspose,
+    CustomC2f,
     Detect,
     DWConv,
     DWConvTranspose2d,
@@ -63,15 +65,13 @@ from ultralytics.nn.modules import (
     RTDETRDecoder,
     SCDown,
     Segment,
+    SwinBlockWrapper,
     TorchVision,
+    TripletAttention,
     WorldDetect,
     YOLOEDetect,
     YOLOESegment,
     v10Detect,
-    CustomC2f,
-    SwinBlockWrapper,
-    TripletAttention,
-    EMA,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml

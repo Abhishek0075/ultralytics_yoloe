@@ -1,7 +1,7 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Block modules."""
 
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -56,7 +56,7 @@ __all__ = (
     "CustomC2f",
     "TripletAttention",
     "SwinBlockWrapper",
-    "EMA"
+    "EMA",
 )
 
 
@@ -197,7 +197,7 @@ class HGBlock(nn.Module):
 class SPP(nn.Module):
     """Spatial Pyramid Pooling (SPP) layer https://arxiv.org/abs/1406.4729."""
 
-    def __init__(self, c1: int, c2: int, k: Tuple[int, ...] = (5, 9, 13)):
+    def __init__(self, c1: int, c2: int, k: tuple[int, ...] = (5, 9, 13)):
         """
         Initialize the SPP layer with input/output channels and pooling kernel sizes.
 
@@ -476,7 +476,7 @@ class Bottleneck(nn.Module):
     """Standard bottleneck."""
 
     def __init__(
-        self, c1: int, c2: int, shortcut: bool = True, g: int = 1, k: Tuple[int, int] = (3, 3), e: float = 0.5
+        self, c1: int, c2: int, shortcut: bool = True, g: int = 1, k: tuple[int, int] = (3, 3), e: float = 0.5
     ):
         """
         Initialize a standard bottleneck module.
@@ -716,7 +716,7 @@ class ImagePoolingAttn(nn.Module):
     """ImagePoolingAttn: Enhance the text embeddings with image-aware information."""
 
     def __init__(
-        self, ec: int = 256, ch: Tuple[int, ...] = (), ct: int = 512, nh: int = 8, k: int = 3, scale: bool = False
+        self, ec: int = 256, ch: tuple[int, ...] = (), ct: int = 512, nh: int = 8, k: int = 3, scale: bool = False
     ):
         """
         Initialize ImagePoolingAttn module.
@@ -745,7 +745,7 @@ class ImagePoolingAttn(nn.Module):
         self.hc = ec // nh
         self.k = k
 
-    def forward(self, x: List[torch.Tensor], text: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: list[torch.Tensor], text: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of ImagePoolingAttn.
 
@@ -861,7 +861,7 @@ class RepBottleneck(Bottleneck):
     """Rep bottleneck."""
 
     def __init__(
-        self, c1: int, c2: int, shortcut: bool = True, g: int = 1, k: Tuple[int, int] = (3, 3), e: float = 0.5
+        self, c1: int, c2: int, shortcut: bool = True, g: int = 1, k: tuple[int, int] = (3, 3), e: float = 0.5
     ):
         """
         Initialize RepBottleneck.
@@ -1031,7 +1031,7 @@ class SPPELAN(nn.Module):
 class CBLinear(nn.Module):
     """CBLinear."""
 
-    def __init__(self, c1: int, c2s: List[int], k: int = 1, s: int = 1, p: Optional[int] = None, g: int = 1):
+    def __init__(self, c1: int, c2s: list[int], k: int = 1, s: int = 1, p: Optional[int] = None, g: int = 1):
         """
         Initialize CBLinear module.
 
@@ -1047,7 +1047,7 @@ class CBLinear(nn.Module):
         self.c2s = c2s
         self.conv = nn.Conv2d(c1, sum(c2s), k, s, autopad(k, p), groups=g, bias=True)
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         """Forward pass through CBLinear layer."""
         return self.conv(x).split(self.c2s, dim=1)
 
@@ -1055,7 +1055,7 @@ class CBLinear(nn.Module):
 class CBFuse(nn.Module):
     """CBFuse."""
 
-    def __init__(self, idx: List[int]):
+    def __init__(self, idx: list[int]):
         """
         Initialize CBFuse module.
 
@@ -1065,7 +1065,7 @@ class CBFuse(nn.Module):
         super().__init__()
         self.idx = idx
 
-    def forward(self, xs: List[torch.Tensor]) -> torch.Tensor:
+    def forward(self, xs: list[torch.Tensor]) -> torch.Tensor:
         """
         Forward pass through CBFuse layer.
 
@@ -1979,7 +1979,7 @@ class Residual(nn.Module):
 class SAVPE(nn.Module):
     """Spatial-Aware Visual Prompt Embedding module for feature enhancement."""
 
-    def __init__(self, ch: List[int], c3: int, embed: int):
+    def __init__(self, ch: list[int], c3: int, embed: int):
         """
         Initialize SAVPE module with channels, intermediate channels, and embedding dimension.
 
@@ -2007,7 +2007,7 @@ class SAVPE(nn.Module):
         self.cv5 = nn.Conv2d(1, self.c, 3, padding=1)
         self.cv6 = nn.Sequential(Conv(2 * self.c, self.c, 3), nn.Conv2d(self.c, self.c, 3, padding=1))
 
-    def forward(self, x: List[torch.Tensor], vp: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: list[torch.Tensor], vp: torch.Tensor) -> torch.Tensor:
         """Process input features and visual prompts to generate enhanced embeddings."""
         y = [self.cv2[i](xi) for i, xi in enumerate(x)]
         y = self.cv4(torch.cat(y, dim=1))
@@ -2054,7 +2054,7 @@ class BasicConv(nn.Module):
         bn=True,
         bias=False,
     ):
-        super(BasicConv, self).__init__()
+        super().__init__()
         self.out_channels = out_planes
         self.conv = nn.Conv2d(
             in_planes,
@@ -2066,11 +2066,7 @@ class BasicConv(nn.Module):
             groups=groups,
             bias=bias,
         )
-        self.bn = (
-            nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True)
-            if bn
-            else None
-        )
+        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
         self.relu = nn.ReLU(inplace=False) if relu else None
 
     def forward(self, x):
@@ -2081,16 +2077,15 @@ class BasicConv(nn.Module):
             x = self.relu(x)
         return x
 
+
 class ChannelPool(nn.Module):
     def forward(self, x):
-        return torch.cat(
-            (torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), dim=1
-        )
+        return torch.cat((torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), dim=1)
 
 
 class SpatialGate(nn.Module):
     def __init__(self):
-        super(SpatialGate, self).__init__()
+        super().__init__()
         self.compress = ChannelPool()
 
         # Replacing the 7x7 convolution with three 3x3 convolutions
@@ -2101,19 +2096,18 @@ class SpatialGate(nn.Module):
     def forward(self, x):
         x_compress = self.compress(x)  # Compress the input using channel pooling
         x_out = self.conv1(x_compress)  # First 3x3 convolution
-        x_out = self.conv2(x_out)      # Second 3x3 convolution
-        x_out = self.conv3(x_out)      # Third 3x3 convolution
+        x_out = self.conv2(x_out)  # Second 3x3 convolution
+        x_out = self.conv3(x_out)  # Third 3x3 convolution
         scale = torch.sigmoid(x_out)  # Apply sigmoid to generate the attention scale
         return x * scale
 
 
-
 class CustomTripletAttention(nn.Module):
     def __init__(self, in_channels):
-        super(CustomTripletAttention, self).__init__()
+        super().__init__()
         self.ChannelGateH = SpatialGate()  # Applies channel attention in height dimension
         self.ChannelGateW = SpatialGate()  # Applies channel attention in width dimension
-        self.SpatialGate = SpatialGate()   # Applies spatial attention
+        self.SpatialGate = SpatialGate()  # Applies spatial attention
 
     def forward(self, x):
         x_perm1 = x.permute(0, 2, 1, 3).contiguous()
@@ -2127,11 +2121,14 @@ class CustomTripletAttention(nn.Module):
         x_out = self.SpatialGate(x)
         return (1 / 3) * (x_out + x_out11 + x_out21)
 
-class CustomC2f(nn.Module): 
+
+class CustomC2f(nn.Module):
     """Replacement of C2f with Triplet Attention Mechanism."""
+
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
         """
         Initializes a Triplet Attention module replacing the original C2f.
+
         - c1: Input channels.
         - c2: Output channels.
         - n: Unused, kept for interface compatibility.
@@ -2139,7 +2136,7 @@ class CustomC2f(nn.Module):
         - g: Unused, kept for interface compatibility.
         - e: Expansion ratio, controls intermediate channels.
         """
-        super(CustomC2f, self).__init__()
+        super().__init__()
         self.c = int(c2 * e)  # Hidden channels, controls intermediate channels.
         self.triplet_attention = CustomTripletAttention(c1)
         self.conv = nn.Conv2d(c1, c2, kernel_size=1, stride=1, bias=False)
@@ -2147,13 +2144,11 @@ class CustomC2f(nn.Module):
         self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
-        """
-        Forward pass through the replaced C2f layer with Triplet Attention.
-        """
+        """Forward pass through the replaced C2f layer with Triplet Attention."""
         # print(f"TripletA Input shape: {x.shape}")
         # Apply triplet attention
         attention_out = self.triplet_attention(x)
-        
+
         # Transform input to desired output channels
         out = self.conv(attention_out)
         out = self.bn(out)
@@ -2161,13 +2156,15 @@ class CustomC2f(nn.Module):
         # print(f"TripletA Output shape: {out.shape}")
         return out
 
+
 # #Triplet attension -----------------------end----------------------------------------------------
 
 
 # Swin Transformer Block-------------start----------------------
-from torchvision.ops.misc import MLP, Permute
+from torchvision.ops.misc import MLP
 from torchvision.ops.stochastic_depth import StochasticDepth
 from torchvision.utils import _log_api_usage_once
+
 
 def _get_relative_position_bias(
     relative_position_bias_table: torch.Tensor, relative_position_index: torch.Tensor, window_size: list[int]
@@ -2198,8 +2195,9 @@ def shifted_window_attention(
     training: bool = True,
 ) -> Tensor:
     """
-    Window based multi-head self attention (W-MSA) module with relative position bias.
-    It supports both of shifted and non-shifted window.
+    Window based multi-head self attention (W-MSA) module with relative position bias. It supports both of shifted and
+    non-shifted window.
+
     Args:
         input (Tensor[N, H, W, C]): The input tensor or 4-dimensions.
         qkv_weight (Tensor[in_dim, out_dim]): The weight tensor of query, key, value.
@@ -2214,6 +2212,7 @@ def shifted_window_attention(
         proj_bias (Tensor[out_dim], optional): The bias tensor of projection. Default: None.
         logit_scale (Tensor[out_dim], optional): Logit scale of cosine attention for Swin Transformer V2. Default: None.
         training (bool, optional): Training flag used by the dropout parameters. Default: True.
+
     Returns:
         Tensor[N, H, W, C]: The output tensor after shifted window attention.
     """
@@ -2272,7 +2271,7 @@ def shifted_window_attention(
         attn_mask = attn_mask.view(pad_H // window_size[0], window_size[0], pad_W // window_size[1], window_size[1])
         attn_mask = attn_mask.permute(0, 2, 1, 3).reshape(num_windows, window_size[0] * window_size[1])
         attn_mask = attn_mask.unsqueeze(1) - attn_mask.unsqueeze(2)
-        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, (-100.0)).masked_fill(attn_mask == 0, 0.0)
         attn = attn.view(x.size(0) // num_windows, num_windows, num_heads, x.size(1), x.size(1))
         attn = attn + attn_mask.unsqueeze(1).unsqueeze(0)
         attn = attn.view(-1, num_heads, x.size(1), x.size(1))
@@ -2301,9 +2300,7 @@ torch.fx.wrap("shifted_window_attention")
 
 
 class ShiftedWindowAttention(nn.Module):
-    """
-    See :func:`shifted_window_attention`.
-    """
+    """See :func:`shifted_window_attention`."""
 
     def __init__(
         self,
@@ -2354,15 +2351,18 @@ class ShiftedWindowAttention(nn.Module):
 
     def get_relative_position_bias(self) -> torch.Tensor:
         return _get_relative_position_bias(
-            self.relative_position_bias_table, self.relative_position_index, self.window_size  # type: ignore[arg-type]
+            self.relative_position_bias_table,
+            self.relative_position_index,
+            self.window_size,  # type: ignore[arg-type]
         )
 
     def forward(self, x: Tensor) -> Tensor:
         """
         Args:
-            x (Tensor): Tensor with layout of [B, H, W, C]
+            x (Tensor): Tensor with layout of [B, H, W, C].
+
         Returns:
-            Tensor with same layout as input, i.e. [B, H, W, C]
+            Tensor with same layout as input, i.e. [B, H, W, C].
         """
         relative_position_bias = self.get_relative_position_bias()
         return shifted_window_attention(
@@ -2380,9 +2380,11 @@ class ShiftedWindowAttention(nn.Module):
             training=self.training,
         )
 
+
 class SwinTransformerBlock(nn.Module):
     """
     Swin Transformer Block.
+
     Args:
         dim (int): Number of input channels.
         num_heads (int): Number of attention heads.
@@ -2393,7 +2395,7 @@ class SwinTransformerBlock(nn.Module):
         attention_dropout (float): Attention dropout rate. Default: 0.0.
         stochastic_depth_prob: (float): Stochastic depth rate. Default: 0.0.
         norm_layer (nn.Module): Normalization layer.  Default: nn.LayerNorm.
-        attn_layer (nn.Module): Attention layer. Default: ShiftedWindowAttention
+        attn_layer (nn.Module): Attention layer. Default: ShiftedWindowAttention.
     """
 
     def __init__(
@@ -2446,12 +2448,7 @@ class SwinBlockWrapper(nn.Module):
         super().__init__()
         # Norm + permute wrapper
         print(f"dim={dim}, window_size={window_size}, shift_size={shift_size}, num_heads={num_heads}")
-        self.swin = SwinTransformerBlock(
-            dim=dim,
-            window_size=window_size,
-            shift_size=shift_size,
-            num_heads=num_heads
-        )
+        self.swin = SwinTransformerBlock(dim=dim, window_size=window_size, shift_size=shift_size, num_heads=num_heads)
 
     def forward(self, x):  # x: (B, C, H, W)
         B, C, H, W = x.shape
@@ -2462,12 +2459,12 @@ class SwinBlockWrapper(nn.Module):
         # Back to (B, C, H, W)
         x = x.permute(0, 3, 1, 2).contiguous()
         return x
-    
+
 
 # Swin Transformer Block-------------end----------------------
 class EMA(nn.Module):
     def __init__(self, channels, c2=None, factor=32):
-        super(EMA, self).__init__()
+        super().__init__()
         self.groups = factor
         assert channels // self.groups > 0
         self.softmax = nn.Softmax(-1)
@@ -2493,11 +2490,12 @@ class EMA(nn.Module):
         x22 = x1.reshape(b * self.groups, c // self.groups, -1)  # b*g, c//g, hw
         weights = (torch.matmul(x11, x12) + torch.matmul(x21, x22)).reshape(b * self.groups, 1, h, w)
         return (group_x * weights.sigmoid()).reshape(b, c, h, w)
-    
-    
+
+
 # ------------------------ EMA End ---------------------------------
 
 # ---------------------------Official Triplet Attention start------------------------------
+
 
 class BasicConv(nn.Module):
     def __init__(
@@ -2513,7 +2511,7 @@ class BasicConv(nn.Module):
         bn=True,
         bias=False,
     ):
-        super(BasicConv, self).__init__()
+        super().__init__()
         self.out_channels = out_planes
         self.conv = nn.Conv2d(
             in_planes,
@@ -2525,11 +2523,7 @@ class BasicConv(nn.Module):
             groups=groups,
             bias=bias,
         )
-        self.bn = (
-            nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True)
-            if bn
-            else None
-        )
+        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
         self.relu = nn.ReLU() if relu else None
 
     def forward(self, x):
@@ -2543,19 +2537,15 @@ class BasicConv(nn.Module):
 
 class ZPool(nn.Module):
     def forward(self, x):
-        return torch.cat(
-            (torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), dim=1
-        )
+        return torch.cat((torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), dim=1)
 
 
 class AttentionGate(nn.Module):
     def __init__(self):
-        super(AttentionGate, self).__init__()
+        super().__init__()
         kernel_size = 7
         self.compress = ZPool()
-        self.conv = BasicConv(
-            2, 1, kernel_size, stride=1, padding=(kernel_size - 1) // 2, relu=False
-        )
+        self.conv = BasicConv(2, 1, kernel_size, stride=1, padding=(kernel_size - 1) // 2, relu=False)
 
     def forward(self, x):
         x_compress = self.compress(x)
@@ -2566,7 +2556,7 @@ class AttentionGate(nn.Module):
 
 class TripletAttention(nn.Module):
     def __init__(self, no_spatial=False):
-        super(TripletAttention, self).__init__()
+        super().__init__()
         self.cw = AttentionGate()
         self.hc = AttentionGate()
         self.no_spatial = no_spatial
