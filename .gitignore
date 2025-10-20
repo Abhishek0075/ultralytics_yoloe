@@ -9,7 +9,6 @@ icpr
 lasot
 dut
 train_valid
-
 # Distribution / packaging
 .Python
 build/
