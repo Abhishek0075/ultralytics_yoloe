@@ -229,16 +229,11 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
     def preprocess_batch(self, batch):
         """Process batch for training, moving text features to the appropriate device."""
         batch = DetectionTrainer.preprocess_batch(self, batch)
-        cap_names = [Path(imf).stem for imf in batch["im_file"]]
-        txt_feats = []
-        for name in cap_names:
-            if name in self.text_embeddings:
-                txt_feats.append(self.text_embeddings[name])
-            else:
-                # fallback if caption embedding not found
-                txt_feats.append(torch.zeros_like(next(iter(self.text_embeddings.values()))))
-        txt_feats = torch.stack(txt_feats).to(self.device)
-        batch["txt_feats"] = txt_feats.unsqueeze(1)  # (B, 1, D)
+
+        texts = list(itertools.chain(*batch["texts"]))
+        txt_feats = torch.stack([self.text_embeddings[text] for text in texts]).to(self.device)
+        txt_feats = txt_feats.reshape(len(batch["texts"]), -1, txt_feats.shape[-1])
+        batch["txt_feats"] = txt_feats
         return batch
     
     def generate_caption_embeddings(self, caption_dir: Path, batch: int, cache_dir: Path):

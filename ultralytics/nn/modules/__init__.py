@@ -59,10 +59,6 @@ from .block import (
     ResNetLayer,
     SCDown,
     TorchVision,
-    CustomC2f,
-    TripletAttention,
-    SwinBlockWrapper,
-    EMA,
 )
 from .conv import (
     CBAM,
@@ -183,8 +179,4 @@ __all__ = (
     "TorchVision",
     "Index",
     "A2C2f",
-    "CustomC2f",
-    "TripletAttention",
-    "SwinBlockWrapper",
-    "EMA",
 )

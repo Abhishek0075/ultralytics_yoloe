@@ -68,10 +68,6 @@ from ultralytics.nn.modules import (
     YOLOEDetect,
     YOLOESegment,
     v10Detect,
-    CustomC2f,
-    SwinBlockWrapper,
-    TripletAttention,
-    EMA,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1031,9 +1027,9 @@ class YOLOEModel(DetectionModel):
         device = next(self.model.parameters()).device
         if not getattr(self, "clip_model", None) and cache_clip_model:
             # For backwards compatibility of models lacking clip_model attribute
-            self.clip_model = build_text_model("clip:ViT-B/32", device=device)
+            self.clip_model = build_text_model("mobileclip:blt", device=device)
 
-        model = self.clip_model if cache_clip_model else build_text_model("clip:ViT-B/32", device=device)
+        model = self.clip_model if cache_clip_model else build_text_model("mobileclip:blt", device=device)
         text_token = model.tokenize(text)
         txt_feats = [model.encode_text(token).detach() for token in text_token.split(batch)]
         txt_feats = txt_feats[0] if len(txt_feats) == 1 else torch.cat(txt_feats, dim=0)
@@ -1648,9 +1644,6 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
-            CustomC2f,
-            SwinBlockWrapper,
-            EMA,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1670,8 +1663,6 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             A2C2f,
-            CustomC2f,
-            EMA,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1687,10 +1678,7 @@ def parse_model(d, ch, verbose=True):
                 with contextlib.suppress(ValueError):
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
-        if m is TripletAttention:
-            c1, c2 = ch[f], ch[f]
-            args = []
-        elif m in base_modules:
+        if m in base_modules:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
@@ -1698,10 +1686,7 @@ def parse_model(d, ch, verbose=True):
                 args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
                 args[2] = int(max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2])
 
-            if m is SwinBlockWrapper:
-                args = [c1, *args[1:]]
-            else:
-                args = [c1, c2, *args[1:]]
+            args = [c1, c2, *args[1:]]
             if m in repeat_modules:
                 args.insert(2, n)  # number of repeats
                 n = 1
