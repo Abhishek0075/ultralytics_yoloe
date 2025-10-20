@@ -160,7 +160,25 @@ class YOLOEPETrainer(DetectionTrainer):
 
         return model
 
+class CaptionedYOLODataset(torch.utils.data.Dataset):
+    """A wrapper to attach text captions to each image sample."""
+    def __init__(self, base_dataset, caption_dir):
+        self.base_dataset = base_dataset
+        self.caption_dir = Path(caption_dir)
 
+    def __len__(self):
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx):
+        item = self.base_dataset[idx]
+        img_path = Path(item["im_file"])
+        caption_file = self.caption_dir / f"{img_path.stem}.txt"
+        if caption_file.exists():
+            item["caption"] = caption_file.read_text().strip()
+        else:
+            item["caption"] = "No caption available."
+        return item
+    
 class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
     """
     Train YOLOE models from scratch with text embedding support.
@@ -189,18 +207,62 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
         Returns:
             (YOLOConcatDataset | Dataset): The constructed dataset for training or validation.
         """
-        return WorldTrainerFromScratch.build_dataset(self, img_path, mode, batch)
+        base_dataset =  WorldTrainerFromScratch.build_dataset(self, img_path, mode, batch)
+        
+        caption_dir = getattr(self.args, "caption_dir", None)
+        if mode == "train" and caption_dir is not None:
+            LOGGER.info(f"Attaching per-image captions from: {caption_dir}")
+            base_dataset = CaptionedYOLODataset(base_dataset, caption_dir)
+
+            # Generate caption embeddings once and cache them
+            cache_dir = Path(getattr(self.args, "cache_dir", "cache"))
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            self.text_embeddings = self.generate_caption_embeddings(
+                caption_dir=Path(caption_dir),
+                batch=64,
+                cache_dir=cache_dir
+            )
+        return base_dataset
 
     def preprocess_batch(self, batch):
         """Process batch for training, moving text features to the appropriate device."""
         batch = DetectionTrainer.preprocess_batch(self, batch)
-        print(batch)
-        texts = list(itertools.chain(*batch["texts"]))
-        txt_feats = torch.stack([self.text_embeddings[text] for text in texts]).to(self.device)
-        txt_feats = txt_feats.reshape(len(batch["texts"]), -1, txt_feats.shape[-1])
-        batch["txt_feats"] = txt_feats
+        cap_names = [Path(imf).stem for imf in batch["im_file"]]
+        txt_feats = []
+        for name in cap_names:
+            if name in self.text_embeddings:
+                txt_feats.append(self.text_embeddings[name])
+            else:
+                # fallback if caption embedding not found
+                txt_feats.append(torch.zeros_like(next(iter(self.text_embeddings.values()))))
+        txt_feats = torch.stack(txt_feats).to(self.device)
+        batch["txt_feats"] = txt_feats.unsqueeze(1)  # (B, 1, D)
         return batch
+    
+    def generate_caption_embeddings(self, caption_dir: Path, batch: int, cache_dir: Path):
+        """
+        Generate and cache text embeddings for all captions in caption_dir.
+        """
+        model = "mobileclip:blt"
+        cache_path = cache_dir / f"caption_embeddings_{model.replace(':', '_')}.pt"
+        if cache_path.exists():
+            LOGGER.info(f"Loading cached caption embeddings from '{cache_path}'")
+            return torch.load(cache_path, map_location=self.device)
 
+        LOGGER.info(f"Generating caption embeddings from: '{caption_dir}'")
+        captions = []
+        caption_files = sorted(caption_dir.glob("*.txt"))
+        for f in caption_files:
+            text = f.read_text().strip()
+            captions.append((f.stem, text))
+
+        texts = [t[1] for t in captions]
+        txt_feats = de_parallel(self.model).get_text_pe(texts, batch, without_reprta=True, cache_clip_model=False)
+        txt_map = {name: emb for (name, _), emb in zip(captions, txt_feats.squeeze(0))}
+        torch.save(txt_map, cache_path)
+        LOGGER.info(f"Saved caption embeddings to '{cache_path}'")
+        return txt_map
+    
     def generate_text_embeddings(self, texts: List[str], batch: int, cache_dir: Path):
         """
         Generate text embeddings for a list of text samples.
