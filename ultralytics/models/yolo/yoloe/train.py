@@ -209,7 +209,9 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
         """
         base_dataset =  WorldTrainerFromScratch.build_dataset(self, img_path, mode, batch)
         
-        caption_dir = getattr(self.args, "caption_dir", None)
+        # For time-being the caption_dir is passed manually
+        caption_dir = "/Data3/Abhishek/TIH/tumor_dataset/train/captions"
+        # caption_dir = getattr(self.args, "caption_dir", None)
         if mode == "train" and caption_dir is not None:
             LOGGER.info(f"Attaching per-image captions from: {caption_dir}")
             base_dataset = CaptionedYOLODataset(base_dataset, caption_dir)
