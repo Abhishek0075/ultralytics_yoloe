@@ -5,7 +5,10 @@ __pycache__/
 
 # C extensions
 *.so
-
+icpr
+lasot
+dut
+train_valid
 # Distribution / packaging
 .Python
 build/
