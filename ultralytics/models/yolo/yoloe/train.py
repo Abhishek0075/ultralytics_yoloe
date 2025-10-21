@@ -2,6 +2,7 @@
 
 import itertools
 from copy import copy, deepcopy
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -195,7 +196,23 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
         """Process batch for training, moving text features to the appropriate device."""
         batch = DetectionTrainer.preprocess_batch(self, batch)
 
-        texts = list(itertools.chain(*batch["texts"]))
+        caption_folder = "/Data3/Abhishek/TIH/tumor_dataset/train/captions"
+        texts = []
+        for img_path in batch["im_file"]:
+            # Extract filename without extension
+            img_name = os.path.basename(img_path)            # e.g., 'y325.jpg'
+            caption_name = img_name.replace(".jpg", "_caption.txt")
+            caption_path = os.path.join(caption_folder, caption_name)
+            
+            # Read the caption if the file exists
+            if os.path.exists(caption_path):
+                with open(caption_path, "r", encoding="utf-8") as f:
+                    caption = f.read().strip()
+                texts.append([caption])   # keep as list to match original shape
+            else:
+                texts.append([""])
+                
+        texts = list(itertools.chain(*texts))
         txt_feats = torch.stack([self.text_embeddings[text] for text in texts]).to(self.device)
         txt_feats = txt_feats.reshape(len(batch["texts"]), -1, txt_feats.shape[-1])
         batch["txt_feats"] = txt_feats
@@ -222,7 +239,9 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
                 return txt_map
         LOGGER.info(f"Caching text embeddings to '{cache_path}'")
         assert self.model is not None
-        txt_feats = de_parallel(self.model).get_text_pe(texts, batch, without_reprta=True, cache_clip_model=False)
+        # print("THis is the model used to get_text_pe",self.model)
+        print(texts)
+        txt_feats = de_parallel(self.model).get_text_pe(texts, batch, without_reprta=False, cache_clip_model=False)
         txt_map = dict(zip(texts, txt_feats.squeeze(0)))
         torch.save(txt_map, cache_path)
         return txt_map

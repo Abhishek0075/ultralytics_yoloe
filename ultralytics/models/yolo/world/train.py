@@ -126,16 +126,39 @@ class WorldTrainer(DetectionTrainer):
             This method collects category names from datasets that have the 'category_names' attribute,
             then uses the first dataset's image path to determine where to cache the generated text embeddings.
         """
+        # ------------------------ADDING CAPTION--------------------
+        from pathlib import Path
+
+        # Folder where captions are stored
+        caption_folder = Path("/Data3/Abhishek/TIH/tumor_dataset/train/captions")
+
+        # Initialize dictionary
         text_embeddings = {}
-        for dataset in datasets:
-            if not hasattr(dataset, "category_names"):
-                continue
-            text_embeddings.update(
-                self.generate_text_embeddings(
-                    list(dataset.category_names), batch, cache_dir=Path(dataset.img_path).parent
-                )
-            )
+
+        # Loop through all caption files in the folder
+        for caption_file in caption_folder.glob("*_caption.txt"):
+            with open(caption_file, "r", encoding="utf-8") as f:
+                text = f.read().strip()
+            # Generate embedding for this text
+            embedding = self.generate_text_embeddings([text], batch=None, cache_dir=caption_folder)[text]
+            text_embeddings[text] = embedding
+
+        # Assign to self.text_embeddings
         self.text_embeddings = text_embeddings
+        
+        # -----------------------END------------------------------
+        
+        
+        # text_embeddings = {}
+        # for dataset in datasets:
+        #     if not hasattr(dataset, "category_names"):
+        #         continue
+        #     text_embeddings.update(
+        #         self.generate_text_embeddings(
+        #             list(dataset.category_names), batch, cache_dir=Path(dataset.img_path).parent
+        #         )
+        #     )
+        # self.text_embeddings = text_embeddings
 
     def generate_text_embeddings(self, texts: List[str], batch: int, cache_dir: Path) -> Dict[str, torch.Tensor]:
         """
