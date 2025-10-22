@@ -195,7 +195,7 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
     def preprocess_batch(self, batch):
         """Process batch for training, moving text features to the appropriate device."""
         batch = DetectionTrainer.preprocess_batch(self, batch)
-
+        # -------------------------START-----------------------------
         caption_folder = "/Data3/Abhishek/TIH/tumor_dataset/train/captions"
         texts = []
         for img_path in batch["im_file"]:
@@ -217,7 +217,15 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
         txt_feats = txt_feats.reshape(len(batch["texts"]), -1, txt_feats.shape[-1])
         batch["txt_feats"] = txt_feats
         return batch
-
+        # -------------------------END-----------------------------
+        
+        # --------------ORIGINAL---------------------------
+        # texts = list(itertools.chain(*batch["texts"]))
+        # txt_feats = torch.stack([self.text_embeddings[text] for text in texts]).to(self.device)
+        # txt_feats = txt_feats.reshape(len(batch["texts"]), -1, txt_feats.shape[-1])
+        # batch["txt_feats"] = txt_feats
+        # return batch
+        # --------------END---------------------------
     def generate_text_embeddings(self, texts: List[str], batch: int, cache_dir: Path):
         """
         Generate text embeddings for a list of text samples.
@@ -240,7 +248,7 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
         LOGGER.info(f"Caching text embeddings to '{cache_path}'")
         assert self.model is not None
         # print("THis is the model used to get_text_pe",self.model)
-        print(texts)
+        # print(texts)
         txt_feats = de_parallel(self.model).get_text_pe(texts, batch, without_reprta=False, cache_clip_model=False)
         txt_map = dict(zip(texts, txt_feats.squeeze(0)))
         torch.save(txt_map, cache_path)

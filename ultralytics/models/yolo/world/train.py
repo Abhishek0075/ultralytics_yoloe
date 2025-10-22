@@ -148,7 +148,7 @@ class WorldTrainer(DetectionTrainer):
         
         # -----------------------END------------------------------
         
-        
+        # ------------Original Code----------------
         # text_embeddings = {}
         # for dataset in datasets:
         #     if not hasattr(dataset, "category_names"):
@@ -159,7 +159,7 @@ class WorldTrainer(DetectionTrainer):
         #         )
         #     )
         # self.text_embeddings = text_embeddings
-
+        # -------------------END---------------------
     def generate_text_embeddings(self, texts: List[str], batch: int, cache_dir: Path) -> Dict[str, torch.Tensor]:
         """
         Generate text embeddings for a list of text samples.
@@ -172,7 +172,7 @@ class WorldTrainer(DetectionTrainer):
         Returns:
             (Dict[str, torch.Tensor]): Dictionary mapping text samples to their embeddings.
         """
-        model = "clip:ViT-B/32"
+        model = "mobileclip:blt"
         cache_path = cache_dir / f"text_embeddings_{model.replace(':', '_').replace('/', '_')}.pt"
         if cache_path.exists():
             LOGGER.info(f"Reading existed cache from '{cache_path}'")
