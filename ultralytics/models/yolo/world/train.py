@@ -140,7 +140,7 @@ class WorldTrainer(DetectionTrainer):
             with open(caption_file, "r", encoding="utf-8") as f:
                 text = f.read().strip()
             # Generate embedding for this text
-            embedding = self.generate_text_embeddings([text], batch=None, cache_dir=caption_folder)[text]
+            embedding = self.generate_text_embeddings([text], batch=80, cache_dir=caption_folder)[text]
             text_embeddings[text] = embedding
 
         # Assign to self.text_embeddings

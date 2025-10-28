@@ -249,7 +249,11 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
         assert self.model is not None
         # print("THis is the model used to get_text_pe",self.model)
         # print(texts)
+        was_training = self.model.training
+        self.model.eval()
         txt_feats = de_parallel(self.model).get_text_pe(texts, batch, without_reprta=False, cache_clip_model=False)
+        if was_training:
+            self.model.train()
         txt_map = dict(zip(texts, txt_feats.squeeze(0)))
         torch.save(txt_map, cache_path)
         return txt_map
