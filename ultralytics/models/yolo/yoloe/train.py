@@ -219,13 +219,13 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
         return batch
         # -------------------------END-----------------------------
         
-        # --------------ORIGINAL---------------------------
+        # # --------------ORIGINAL---------------------------
         # texts = list(itertools.chain(*batch["texts"]))
         # txt_feats = torch.stack([self.text_embeddings[text] for text in texts]).to(self.device)
         # txt_feats = txt_feats.reshape(len(batch["texts"]), -1, txt_feats.shape[-1])
         # batch["txt_feats"] = txt_feats
         # return batch
-        # --------------END---------------------------
+        # # --------------END---------------------------
     def generate_text_embeddings(self, texts: List[str], batch: int, cache_dir: Path):
         """
         Generate text embeddings for a list of text samples.
