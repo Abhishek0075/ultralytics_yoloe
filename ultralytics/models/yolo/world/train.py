@@ -64,7 +64,9 @@ class WorldTrainer(DetectionTrainer):
             overrides = {}
         super().__init__(cfg, overrides, _callbacks)
         self.text_embeddings = None
-
+        # self.use_captions = True   # Change to True it to use our own captions
+        # print("---------Using captions") if self.use_captions else print("---------Not using captions")
+        
     def get_model(self, cfg=None, weights: Optional[str] = None, verbose: bool = True) -> WorldModel:
         """
         Return WorldModel initialized with specified config and weights.
@@ -103,6 +105,7 @@ class WorldTrainer(DetectionTrainer):
         Returns:
             (Any): YOLO dataset configured for training or validation.
         """
+        assert batch is not None
         gs = max(int(de_parallel(self.model).stride.max() if self.model else 0), 32)
         dataset = build_yolo_dataset(
             self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs, multi_modal=mode == "train"
@@ -130,25 +133,32 @@ class WorldTrainer(DetectionTrainer):
         from pathlib import Path
 
         # Folder where captions are stored
-        caption_folder = Path("/Data3/Abhishek/TIH/tumor_dataset/train/captions")
+        caption_folder = Path("/Data3/Abhishek/TAYLODENTAL/dentex.v2i.yolov8/train/captions")
 
         # Initialize dictionary
-        text_embeddings = {}
+        unique_captions = set()
 
-        # Loop through all caption files in the folder
-        for caption_file in caption_folder.glob("*_caption.txt"):
+        for caption_file in caption_folder.glob("*.txt"):
             with open(caption_file, "r", encoding="utf-8") as f:
                 text = f.read().strip()
-            # Generate embedding for this text
-            embedding = self.generate_text_embeddings([text], batch=80, cache_dir=caption_folder)[text]
-            text_embeddings[text] = embedding
+            if text:  # optional: ignore empty captions
+                unique_captions.add(text)
 
-        # Assign to self.text_embeddings
-        self.text_embeddings = text_embeddings
+        unique_captions = list(unique_captions)
+
+        # Generate embeddings only for unique captions (in one go or batched inside the function)
+        t_embeddings = self.generate_text_embeddings(
+            unique_captions,
+            batch=batch,
+            cache_dir=caption_folder
+        )
+        
+        # Store in self.text_embeddings
+        self.text_embeddings = t_embeddings
         
         # -----------------------END------------------------------
         
-        # ------------Original Code----------------
+        # # ------------Original Code----------------
         # text_embeddings = {}
         # for dataset in datasets:
         #     if not hasattr(dataset, "category_names"):
@@ -159,7 +169,9 @@ class WorldTrainer(DetectionTrainer):
         #         )
         #     )
         # self.text_embeddings = text_embeddings
-        # -------------------END---------------------
+        # print(f"Generated embeddings for {len(text_embeddings)} unique captions.")
+        # print(f"Sample embedding shape : {list(text_embeddings.values())[0].shape}")
+        # # -------------------END---------------------
     def generate_text_embeddings(self, texts: List[str], batch: int, cache_dir: Path) -> Dict[str, torch.Tensor]:
         """
         Generate text embeddings for a list of text samples.

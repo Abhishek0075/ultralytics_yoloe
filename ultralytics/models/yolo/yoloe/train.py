@@ -195,26 +195,37 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
     def preprocess_batch(self, batch):
         """Process batch for training, moving text features to the appropriate device."""
         batch = DetectionTrainer.preprocess_batch(self, batch)
-        # -------------------------START-----------------------------
-        caption_folder = "/Data3/Abhishek/TIH/tumor_dataset/train/captions"
+        
+        # Load captions from files and create text features
+        caption_folder = "/Data3/Abhishek/TAYLODENTAL/dentex.v2i.yolov8/train/captions"
+        nc = self.data["nc"]
         texts = []
+        
         for img_path in batch["im_file"]:
             # Extract filename without extension
-            img_name = os.path.basename(img_path)            # e.g., 'y325.jpg'
-            caption_name = img_name.replace(".jpg", "_caption.txt")
+            img_name = os.path.basename(img_path)  # e.g., 'y325.jpg'
+            caption_name = img_name.replace(".jpg", ".txt")
             caption_path = os.path.join(caption_folder, caption_name)
             
-            # Read the caption if the file exists
+            # Read the caption if the file exists, otherwise use empty string
             if os.path.exists(caption_path):
                 with open(caption_path, "r", encoding="utf-8") as f:
                     caption = f.read().strip()
-                texts.append([caption])   # keep as list to match original shape
+                # Repeat caption for all classes to match expected shape [batch_size, nc, embedding_dim]
+                texts.append([caption] * nc)
             else:
-                texts.append([""])
-                
-        texts = list(itertools.chain(*texts))
-        txt_feats = torch.stack([self.text_embeddings[text] for text in texts]).to(self.device)
-        txt_feats = txt_feats.reshape(len(batch["texts"]), -1, txt_feats.shape[-1])
+                texts.append([""] * nc)
+
+        texts_flat = list(itertools.chain(*texts))
+        # Get batch size
+        batch_size = len(batch["texts"])
+        
+        # Stack embeddings: shape will be [batch_size * nc, embedding_dim]
+        txt_feats = torch.stack([self.text_embeddings[text] for text in texts_flat]).to(self.device)
+        
+        # Reshape to [batch_size, nc, embedding_dim] to match model expectations
+        txt_feats = txt_feats.reshape(batch_size, nc, txt_feats.shape[-1])
+        
         batch["txt_feats"] = txt_feats
         return batch
         # -------------------------END-----------------------------
@@ -247,8 +258,6 @@ class YOLOETrainerFromScratch(YOLOETrainer, WorldTrainerFromScratch):
                 return txt_map
         LOGGER.info(f"Caching text embeddings to '{cache_path}'")
         assert self.model is not None
-        # print("THis is the model used to get_text_pe",self.model)
-        # print(texts)
         was_training = self.model.training
         self.model.eval()
         txt_feats = de_parallel(self.model).get_text_pe(texts, batch, without_reprta=False, cache_clip_model=False)

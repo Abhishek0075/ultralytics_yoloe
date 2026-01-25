@@ -52,6 +52,8 @@ __all__ = (
     "PSA",
     "SCDown",
     "TorchVision",
+    "CustomC2f",
+    "TripletAttention"
 )
 
 
@@ -2031,3 +2033,128 @@ class SAVPE(nn.Module):
         aggregated = score.transpose(-2, -3) @ x.reshape(B, self.c, C // self.c, -1).transpose(-1, -2)
 
         return F.normalize(aggregated.transpose(-2, -3).reshape(B, Q, -1), dim=-1, p=2)
+
+ # Triplet Attention Mechanism
+class BasicConv(nn.Module):
+    def __init__(
+        self,
+        in_planes,
+        out_planes,
+        kernel_size,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        relu=True,
+        bn=True,
+        bias=False,
+    ):
+        super(BasicConv, self).__init__()
+        self.out_channels = out_planes
+        self.conv = nn.Conv2d(
+            in_planes,
+            out_planes,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+            bias=bias,
+        )
+        self.bn = (
+            nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True)
+            if bn
+            else None
+        )
+        self.relu = nn.ReLU(inplace=False) if relu else None
+
+    def forward(self, x):
+        x = self.conv(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        if self.relu is not None:
+            x = self.relu(x)
+        return x
+
+class ChannelPool(nn.Module):
+    def forward(self, x):
+        return torch.cat(
+            (torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), dim=1
+        )
+
+
+class SpatialGate(nn.Module):
+    def __init__(self):
+        super(SpatialGate, self).__init__()
+        self.compress = ChannelPool()
+
+        # Replacing the 7x7 convolution with three 3x3 convolutions
+        self.conv1 = BasicConv(2, 1, 3, stride=1, padding=1, relu=True)  # First 3x3 convolution
+        self.conv2 = BasicConv(1, 1, 3, stride=1, padding=1, relu=True)  # Second 3x3 convolution
+        self.conv3 = BasicConv(1, 1, 3, stride=1, padding=1, relu=True)  # Third 3x3 convolution
+
+    def forward(self, x):
+        x_compress = self.compress(x)  # Compress the input using channel pooling
+        x_out = self.conv1(x_compress)  # First 3x3 convolution
+        x_out = self.conv2(x_out)      # Second 3x3 convolution
+        x_out = self.conv3(x_out)      # Third 3x3 convolution
+        scale = torch.sigmoid(x_out)  # Apply sigmoid to generate the attention scale
+        return x * scale
+
+
+
+class TripletAttention(nn.Module):
+    def __init__(self, in_channels):
+        super(TripletAttention, self).__init__()
+        self.ChannelGateH = SpatialGate()  # Applies channel attention in height dimension
+        self.ChannelGateW = SpatialGate()  # Applies channel attention in width dimension
+        self.SpatialGate = SpatialGate()   # Applies spatial attention
+
+    def forward(self, x):
+        x_perm1 = x.permute(0, 2, 1, 3).contiguous()
+        x_out1 = self.ChannelGateH(x_perm1)
+        x_out11 = x_out1.permute(0, 2, 1, 3).contiguous()
+
+        x_perm2 = x.permute(0, 3, 2, 1).contiguous()
+        x_out2 = self.ChannelGateW(x_perm2)
+        x_out21 = x_out2.permute(0, 3, 2, 1).contiguous()
+
+        x_out = self.SpatialGate(x)
+        return (1 / 3) * (x_out + x_out11 + x_out21)
+
+class CustomC2f(nn.Module):
+    """Replacement of C2f with Triplet Attention Mechanism."""
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
+        """
+        Initializes a Triplet Attention module replacing the original C2f.
+        - c1: Input channels.
+        - c2: Output channels.
+        - n: Unused, kept for interface compatibility.
+        - shortcut: Unused, kept for interface compatibility.
+        - g: Unused, kept for interface compatibility.
+        - e: Expansion ratio, controls intermediate channels.
+        """
+        super(CustomC2f, self).__init__()
+        self.c = int(c2 * e)  # Hidden channels, controls intermediate channels.
+        self.triplet_attention = TripletAttention(c1)
+        self.conv = nn.Conv2d(c1, c2, kernel_size=1, stride=1, bias=False)
+        self.bn = nn.BatchNorm2d(c2)
+        self.relu = nn.ReLU(inplace=False)
+
+    def forward(self, x):
+        """
+        Forward pass through the replaced C2f layer with Triplet Attention.
+        """
+        # print(f"TripletA Input shape: {x.shape}")
+        # Apply triplet attention
+        attention_out = self.triplet_attention(x)
+        
+        # Transform input to desired output channels
+        out = self.conv(attention_out)
+        out = self.bn(out)
+        out = self.relu(out)
+        # print(f"TripletA Output shape: {out.shape}")
+        return out
+
+
+
